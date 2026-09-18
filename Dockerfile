@@ -15,7 +15,9 @@ COPY app ./app
 
 # Non-root. No secrets are baked in — every key arrives as an environment
 # variable at run time.
-RUN useradd --create-home --uid 10001 gridwise
+# uid 1000: some hosts (Hugging Face Spaces among them) require the container to
+# run as uid 1000, and every other platform is happy with it.
+RUN useradd --create-home --uid 1000 gridwise
 USER gridwise
 
 EXPOSE 8000
