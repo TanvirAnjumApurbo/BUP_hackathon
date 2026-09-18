@@ -7,7 +7,7 @@
 | **Live endpoint** | `https://buphackathon-production-7134.up.railway.app` |
 | **Docker image** | `ghcr.io/tanviranjumapurbo/bup_hackathon:0466c8f` |
 | **Image digest** | `sha256:711dbc4b689dc0a02bb2e1c20a7c6479b4c00f5e94ed885d9f044879869bf2ea` |
-| **Model / provider** | OpenAI `gpt-4o-mini` (Chat Completions, strict `json_schema`, `temperature=0`) |
+| **Model / provider** | OpenAI `gpt-5.4-mini` (Chat Completions, strict `json_schema`, `temperature=0`) |
 | **Runtime** | Python 3.11, FastAPI + uvicorn, SciPy HiGHS |
 
 ```bash
@@ -79,7 +79,7 @@ Instead of a `.env` file the variables can be exported directly:
 ```bash
 export OPENAI_API_KEY="<your key>"
 export LLM_PROVIDER=openai
-export LLM_MODEL=gpt-4o-mini
+export LLM_MODEL=gpt-5.4-mini
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
@@ -95,15 +95,25 @@ this README — nothing is assumed to be pre-installed beyond Python and git.
 | | |
 |---|---|
 | Provider | **OpenAI** (`https://api.openai.com/v1`, Chat Completions) |
-| Model id | **`gpt-4o-mini`** |
+| Model id | **`gpt-5.4-mini`** |
 | Output mode | strict `json_schema` structured output |
 | Temperature | `0` |
 | Calls per request | **one**, covering all operator notes together |
 | Retry | one retry on the same provider, with the validator's error text fed back |
 | Failover | next configured provider, then a keyword interpreter (degraded mode) |
 
-The provider is pluggable. `GROQ_API_KEY` or `GEMINI_API_KEY` can be set to add failover
-providers; anything OpenAI-compatible works by pointing `OPENAI_BASE_URL` elsewhere.
+Two failover providers are configured behind it, tried in order if OpenAI fails:
+
+| Order | Provider | Model |
+|---|---|---|
+| 1 | OpenAI | `gpt-5.4-mini` |
+| 2 | Groq | `openai/gpt-oss-120b` |
+| 3 | Google AI Studio | `gemini-flash-lite-latest` |
+
+Model choice was made by measurement, not preference — `scripts/bench_models.py`
+benchmarks candidates on this exact task and reports accuracy and latency. `gpt-5.4-mini`
+scored 8/8 with the lowest p95 of every candidate tried. Anything OpenAI-compatible can be
+substituted by pointing `OPENAI_BASE_URL` elsewhere.
 
 ### Environment variables
 
@@ -114,7 +124,7 @@ and contains empty values; `.env` is gitignored.
 |---|---|---|
 | `OPENAI_API_KEY` | **yes\*** | Credential for the OpenAI provider |
 | `LLM_PROVIDER` | no (default `openai`) | Which provider to try first: `openai`, `groq`, `gemini` |
-| `LLM_MODEL` | no (default `gpt-4o-mini`) | Model identifier for the OpenAI provider |
+| `LLM_MODEL` | no (default `gpt-5.4-mini`) | Model identifier for the OpenAI provider |
 | `OPENAI_BASE_URL` | no (default OpenAI) | Override for an OpenAI-compatible endpoint |
 | `GROQ_API_KEY` | no | Credential for the Groq failover provider |
 | `GROQ_MODEL` | no | Model identifier for Groq |
@@ -245,7 +255,7 @@ Diagnostics are returned as **headers** so the JSON stays on contract:
 
 | Header | Meaning |
 |---|---|
-| `X-Interpreter` | Which path produced the directives, e.g. `llm:openai/gpt-4o-mini` |
+| `X-Interpreter` | Which path produced the directives, e.g. `llm:openai/gpt-5.4-mini` |
 | `X-Optimizer` | Which solve path produced the plan, e.g. `lp` |
 | `X-Self-Check` | Result of our own replay validation on this response |
 | `X-Latency-Ms` | Server-side handling time |
@@ -316,6 +326,7 @@ python scripts/test_guardrails.py     # repair layer, on clean AND deliberately 
 python scripts/test_overlaps.py       # how overlapping directives combine; infeasibility fallback
 python scripts/test_selfcheck.py      # replay gate, safe fallback plan, directive dropping
 python scripts/check_llm.py           # provider reachability, extraction accuracy, latency
+python scripts/bench_models.py        # compare candidate models on accuracy and latency
 python scripts/verify_deployment.py <base-url>   # full check of a live deployment
 ```
 
@@ -438,7 +449,7 @@ docker pull ghcr.io/tanviranjumapurbo/bup_hackathon:0466c8f
 docker run --rm -p 8000:8000 \
   -e PORT=8000 \
   -e LLM_PROVIDER=openai \
-  -e LLM_MODEL=gpt-4o-mini \
+  -e LLM_MODEL=gpt-5.4-mini \
   -e OPENAI_API_KEY="<your key>" \
   ghcr.io/tanviranjumapurbo/bup_hackathon:0466c8f
 ```
@@ -472,7 +483,7 @@ credentials of any kind** — every key is supplied at run time.
 | [SciPy](https://scipy.org/) — `linprog`, HiGHS | Linear-programming optimizer |
 | [NumPy](https://numpy.org/) | Constraint matrix construction |
 | [httpx](https://www.python-httpx.org/) | Async HTTP client for the model provider |
-| [OpenAI API](https://platform.openai.com/) | `gpt-4o-mini`, operator-note interpretation |
+| [OpenAI API](https://platform.openai.com/) | `gpt-5.4-mini`, operator-note interpretation |
 
 Exact pins are in `requirements.txt`. Verified on Python 3.11 (container) and 3.12 (development)
 with FastAPI 0.141, pydantic 2.13, SciPy 1.13, NumPy 1.26, httpx 0.28.
@@ -496,8 +507,8 @@ was used during development, which the official rulebook permits.
   the offending one and reports that in `X-Optimizer`. Organizer scenarios are documented as
   feasible, so this only guards against a misparse.
 - **Latency floor.** A request that misses the cache is dominated by the provider round trip,
-  typically 1.5–3.5 s. Measured p95 against the live endpoint is about 3.0 s, inside the 5 s band,
-  but it moves with provider and network conditions.
+  typically 1.0–2.0 s. Measured p95 over three full sweeps is about 1.7 s, well inside the 5 s
+  band, but it moves with provider and network conditions.
 
 ### Secret handling
 

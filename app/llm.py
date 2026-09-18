@@ -125,6 +125,9 @@ RESPONSE_SCHEMA = {
     "additionalProperties": False,
 }
 
+# Models that reject an explicit temperature; learned at runtime on the first 400.
+_NO_TEMPERATURE: set = set()
+
 _CACHE_LIMIT = 512
 _cache: "OrderedDict[str, List[Dict[str, Any]]]" = OrderedDict()
 _client: Optional[httpx.AsyncClient] = None
@@ -216,6 +219,8 @@ async def _call_openai_compatible(
         "temperature": 0,
         "messages": _messages(notes, battery, correction),
     }
+    if cfg.model in _NO_TEMPERATURE:
+        body.pop("temperature")
     if cfg.name == "openai":
         body["response_format"] = {
             "type": "json_schema",
@@ -230,29 +235,49 @@ async def _call_openai_compatible(
         body["response_format"] = {"type": "json_object"}
 
     client = await get_client()
-    response = await client.post(
-        f"{cfg.base_url}/chat/completions",
-        json=body,
-        headers={"Authorization": f"Bearer {cfg.api_key}"},
-    )
+    headers = {"Authorization": f"Bearer {cfg.api_key}"}
+    response = await client.post(f"{cfg.base_url}/chat/completions", json=body, headers=headers)
+
+    # Some newer reasoning models reject an explicit temperature. Retry once
+    # without it rather than failing over to a weaker provider over a parameter.
+    if response.status_code == 400 and "temperature" in response.text.lower():
+        logger.info("%s rejects temperature; retrying without it", cfg.model)
+        _NO_TEMPERATURE.add(cfg.model)
+        body.pop("temperature", None)
+        response = await client.post(f"{cfg.base_url}/chat/completions", json=body, headers=headers)
+
     response.raise_for_status()
     content = response.json()["choices"][0]["message"]["content"]
     return json.loads(content)
 
 
+def _to_gemini_schema(node: Any) -> Any:
+    """Convert our JSON Schema into the OpenAPI subset Gemini accepts.
+
+    Gemini rejects `additionalProperties`, and rejects a union type written as
+    `{"type": ["number", "null"]}` — it wants `{"type": "number", "nullable": true}`.
+    """
+    if isinstance(node, list):
+        return [_to_gemini_schema(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+
+    out: Dict[str, Any] = {}
+    for key, value in node.items():
+        if key == "additionalProperties":
+            continue
+        if key == "type" and isinstance(value, list):
+            concrete = [t for t in value if t != "null"]
+            out["type"] = concrete[0] if concrete else "string"
+            if "null" in value:
+                out["nullable"] = True
+            continue
+        out[key] = _to_gemini_schema(value)
+    return out
+
+
 async def _call_gemini(cfg: ProviderConfig, notes, battery, correction: Optional[str]) -> Any:
-    schema = json.loads(json.dumps(RESPONSE_SCHEMA))
-
-    def strip(node):  # Gemini rejects additionalProperties
-        if isinstance(node, dict):
-            node.pop("additionalProperties", None)
-            for value in node.values():
-                strip(value)
-        elif isinstance(node, list):
-            for value in node:
-                strip(value)
-
-    strip(schema)
+    schema = _to_gemini_schema(json.loads(json.dumps(RESPONSE_SCHEMA)))
 
     parts = [{"text": build_user_prompt(notes, battery)}]
     if correction:

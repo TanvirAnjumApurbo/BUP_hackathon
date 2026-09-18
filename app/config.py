@@ -72,14 +72,14 @@ def configured_providers() -> List[ProviderConfig]:
             kind="openai",
             base_url=_env("OPENAI_BASE_URL", "https://api.openai.com/v1"),
             api_key=_secret("OPENAI_API_KEY"),
-            model=_env("LLM_MODEL", "gpt-4o-mini"),
+            model=_env("LLM_MODEL", "gpt-5.4-mini"),
         ),
         "groq": ProviderConfig(
             name="groq",
             kind="openai",
             base_url=_env("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
             api_key=_secret("GROQ_API_KEY"),
-            model=_env("GROQ_MODEL", "llama-3.3-70b-versatile"),
+            model=_env("GROQ_MODEL", "openai/gpt-oss-120b"),
         ),
         "gemini": ProviderConfig(
             name="gemini",
@@ -88,7 +88,7 @@ def configured_providers() -> List[ProviderConfig]:
                 "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
             ),
             api_key=_secret("GEMINI_API_KEY"),
-            model=_env("GEMINI_MODEL", "gemini-2.5-flash-lite"),
+            model=_env("GEMINI_MODEL", "gemini-flash-lite-latest"),
         ),
     }
 
