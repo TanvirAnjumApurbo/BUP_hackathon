@@ -153,7 +153,11 @@ def directive_effects(request: Dict[str, Any], directives: Sequence[Dict[str, An
     hours = {int(h["hour"]): h for h in request["hours"]}
     battery = request["battery"]
 
-    effective_solar = {h: float(hours[h]["solar_kwh"]) for h in range(24)}
+    # Overlapping directives of the same kind combine by taking the most
+    # restrictive single value, never by compounding. Two notes saying "solar at
+    # 50%" and "solar at 25%" mean 25% of forecast, not 12.5% — the physical
+    # condition is the worse of the two, not the product of both.
+    solar_factor = {h: 1.0 for h in range(24)}
     grid_cap: Dict[int, Optional[float]] = {h: None for h in range(24)}
     floor = {h: float(battery["minimum_energy_kwh"]) for h in range(24)}
     no_charge = set()
@@ -167,7 +171,7 @@ def directive_effects(request: Dict[str, Any], directives: Sequence[Dict[str, An
             if not isinstance(h, int) or not 0 <= h <= 23:
                 continue
             if dtype == "solar_reduction":
-                effective_solar[h] *= float(adjustment["factor"])
+                solar_factor[h] = min(solar_factor[h], float(adjustment["factor"]))
             elif dtype == "max_grid_window":
                 cap = float(adjustment["max_grid_kwh"])
                 grid_cap[h] = cap if grid_cap[h] is None else min(grid_cap[h], cap)
@@ -178,6 +182,9 @@ def directive_effects(request: Dict[str, Any], directives: Sequence[Dict[str, An
             elif dtype == "no_discharge_window":
                 no_discharge.add(h)
 
+    effective_solar = {
+        h: float(hours[h]["solar_kwh"]) * solar_factor[h] for h in range(24)
+    }
     return effective_solar, grid_cap, floor, no_charge, no_discharge
 
 

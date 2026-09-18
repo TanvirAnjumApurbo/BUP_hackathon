@@ -239,10 +239,37 @@ reference optimal cost exactly.
 Two further suites need no network and no LLM quota:
 
 ```bash
-python scripts/test_optimizer.py    # LP vs the reference optima, using reference directives
+python scripts/test_optimizer.py    # LP vs the reference optima, plus the rubric's quality_ratio
 python scripts/test_guardrails.py   # repair layer, on clean AND deliberately corrupted model output
+python scripts/test_overlaps.py     # how overlapping directives combine, plus infeasibility fallback
 python scripts/check_llm.py         # provider reachability, accuracy and latency
 ```
+
+`test_optimizer.py` reports the rubric's own Optimization Quality formula,
+`min(1, organizer_optimal_cost / our_cost)`, per case and as a mean:
+
+```
+mean quality_ratio                     1.0000
+projected Optimization Quality          10.00 / 10
+```
+
+### How overlapping directives combine
+
+Two directives of the same kind on the same hour resolve to the single most
+restrictive value — they never compound:
+
+| Kind | Rule |
+|---|---|
+| `solar_reduction` | **minimum** factor. 0.5 and 0.25 give 0.25, not 0.125 |
+| `max_grid_window` | minimum cap |
+| `minimum_battery_reserve` | maximum floor, and never below `battery.minimum_energy_kwh` |
+| `no_charge_window` / `no_discharge_window` | union of hours |
+
+This matters because `directive_effects` in `app/validator.py` is the single
+shared source of truth for both the optimizer and the replay validator. A wrong
+rule here would be self-consistently wrong — we would plan against the wrong
+ceiling and our own validator would agree, while the judge replays against the
+true value. `scripts/test_overlaps.py` locks all four rules in.
 
 ---
 

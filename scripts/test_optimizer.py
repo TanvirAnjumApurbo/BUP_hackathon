@@ -34,12 +34,16 @@ SAMPLES = (
 def main() -> int:
     cases = json.loads(SAMPLES.read_text(encoding="utf-8"))["cases"]
 
-    header = f"{'case':<11}{'ref cost':>12}{'our cost':>12}{'delta':>10}{'valid':>9}{'route':>18}{'ms':>8}"
+    header = (
+        f"{'case':<11}{'ref cost':>12}{'our cost':>12}{'delta':>10}"
+        f"{'quality':>10}{'valid':>9}{'route':>16}{'ms':>7}"
+    )
     print()
     print(header)
     print("-" * len(header))
 
     failures = 0
+    ratios = []
     for case in cases:
         req = OptimizeRequest.model_validate(case["input"])
         expected = case["expected_output"]
@@ -68,24 +72,36 @@ def main() -> int:
         delta = total_cost - ref
         cost_ok = abs(delta) <= TOL
         valid = not problems
+
+        # The rubric's own Optimization Quality formula.
+        ratio = min(1.0, ref / total_cost) if total_cost > 0 else 0.0
+        ratios.append(ratio)
+
         if not (cost_ok and valid):
             failures += 1
 
         print(
             f"{case['id']:<11}{ref:>12,.2f}{total_cost:>12,.2f}"
             f"{(GREEN if cost_ok else RED)}{delta:>10.4f}{RESET}"
+            f"{(GREEN if ratio >= 0.9999 else RED)}{ratio:>10.4f}{RESET}"
             f"{(GREEN + 'pass' if valid else RED + 'FAIL') + RESET:>18}"
-            f"{route:>18}{ms:>8.1f}"
+            f"{route:>16}{ms:>7.1f}"
         )
         for problem in problems[:5]:
             print(f"    {RED}- {problem}{RESET}")
 
     print("-" * len(header))
+    mean_ratio = sum(ratios) / len(ratios) if ratios else 0.0
+    score = 10.0 * mean_ratio
+    colour = GREEN if mean_ratio >= 0.9999 else RED
+    print(f"{'mean quality_ratio':<35}{colour}{mean_ratio:>10.4f}{RESET}")
+    print(f"{'projected Optimization Quality':<35}{colour}{score:>9.2f}{RESET} / 10")
+
     if failures:
         print(f"\n{RED}{failures} case(s) failed.{RESET}\n")
         return 1
     print(f"\n{GREEN}10/10 exact optimal, 10/10 valid against ground-truth directives.{RESET}")
-    print(f"{DIM}Optimization Quality and Directive Application are now covered.{RESET}\n")
+    print(f"{DIM}quality_ratio = min(1, organizer_optimal_cost / our_cost), per the rubric.{RESET}\n")
     return 0
 
 
