@@ -19,7 +19,7 @@ import re
 from typing import Any, Dict, List, Optional, Sequence
 
 from app.models import BatteryInput, DirectiveInterpretation
-from app.timewindows import parse_window
+from app.timewindows import parse_window  # noqa: F401
 
 logger = logging.getLogger("gridwise.guardrails")
 
@@ -65,10 +65,21 @@ _SOLAR_OFF = re.compile(
 )
 
 # A note only earns a directive if it talks about today's electricity operation.
+# Every noun here takes \w* so plurals match: an earlier version used `panel\b`
+# and `inverter\b`, which silently failed on "panels" and "Inverters" and forced
+# real directives to no_op.
 _ENERGY_WORDS = re.compile(
-    r"\b(solar|pv|panel|inverter|photovoltaic|batter\w*|charg\w*|discharg\w*|"
-    r"grid|import|feeder|substation|transformer|kwh|reserve|load|demand|tariff|"
-    r"electric\w*|power|energy|generator|ups)\b",
+    r"\b(solar|pv|panel\w*|inverter\w*|photovoltaic\w*|rooftop|array\w*|module\w*|"
+    r"batter\w*|charg\w*|discharg\w*|storage|"
+    r"grid|import\w*|intake|feeder\w*|substation\w*|transformer\w*|mains|meter\w*|"
+    r"kwh|kw|reserve\w*|load\w*|demand\w*|tariff\w*|"
+    r"electric\w*|power\w*|energy|generator\w*|genset|ups)\b",
+    re.I,
+)
+
+# Solar hardware, used to recognise an outage note that the model mislabelled.
+_SOLAR_EQUIPMENT = re.compile(
+    r"\b(solar|pv|photovoltaic\w*|panel\w*|inverter\w*|rooftop|array\w*|module\w*)\b",
     re.I,
 )
 
@@ -285,8 +296,43 @@ def resolve_grid_cap(note: str, model_value: Any) -> Optional[float]:
 
 
 def looks_irrelevant(note: str) -> bool:
-    """Final defence against a distractor being promoted into a real directive."""
-    return not _ENERGY_WORDS.search(note or "")
+    """Final defence against a distractor being promoted into a real directive.
+
+    Deliberately conservative. Forcing a genuine directive to no_op is the most
+    expensive mistake available — it loses the interpretation point *and* makes
+    the schedule violate the true directive, which costs the optimization credit
+    for that case too. Letting a distractor through only costs the first.
+
+    So a note is only overridden when it mentions nothing electrical AND states
+    no time window. A real distractor ("the seminar room booking moved to next
+    week") has neither.
+    """
+    if _ENERGY_WORDS.search(note or ""):
+        return False
+    return parse_window(note or "") is None
+
+
+def reclassify_solar_outage(note: str, directive_type: str) -> str:
+    """Solar hardware plus an outage phrase is a solar_reduction, whatever the model said.
+
+    Observed on a real provider, from the same note on different runs:
+      "Inverters are fully offline from 1 PM until 4 PM"
+        -> no_discharge_window  (an offline inverter was read as blocking the battery)
+        -> no_op                (the note was read as not affecting the schedule)
+    Both are wrong; the note is about generation, not storage.
+
+    Overriding no_op needs all three signals — named solar hardware, an explicit
+    outage phrase, and a parseable time window. A distractor has none of them, so
+    this cannot promote one into a directive.
+    """
+    if directive_type == "solar_reduction":
+        return directive_type
+    if not (_SOLAR_EQUIPMENT.search(note) and _SOLAR_OFF.search(note)):
+        return directive_type
+    if directive_type == "no_op" and parse_window(note) is None:
+        return directive_type
+    logger.info("reclassified %s -> solar_reduction (solar hardware outage)", directive_type)
+    return "solar_reduction"
 
 
 def _no_op(index: int, explanation: str = NO_OP_EXPLANATION) -> DirectiveInterpretation:
@@ -322,7 +368,14 @@ def build_interpretations(
         if not isinstance(explanation, str) or not explanation.strip():
             explanation = "Interpreted from the operator note."
 
-        if directive_type not in VALID_TYPES or directive_type == "no_op":
+        if directive_type not in VALID_TYPES:
+            directive_type = "no_op"
+
+        # Runs before the no_op short-circuit: an unmistakable solar outage must
+        # survive the model having called it no_op.
+        directive_type = reclassify_solar_outage(note, directive_type)
+
+        if directive_type == "no_op":
             results.append(_no_op(index))
             continue
 
