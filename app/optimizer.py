@@ -166,14 +166,42 @@ def build_optimal_plan(
     if plan is not None:
         return plan, "lp"
 
-    # Directives made it infeasible. Solve the underlying physics so we still
-    # return a schedule that satisfies every GridWise energy rule.
-    logger.warning("falling back: re-solving %s without directives", req.scenario_id)
+    # Infeasible. Rather than abandoning every directive at once, find the single
+    # offending one and drop only that — a misparsed reserve above what the
+    # battery can reach should not cost us an unrelated no_charge_window.
+    directives = list(directives)
+    for index, offender in enumerate(directives):
+        reduced = directives[:index] + directives[index + 1 :]
+        plan = _solve(req, reduced)
+        if plan is not None:
+            dropped = offender.get("directive_type", "unknown")
+            logger.warning(
+                "%s infeasible; dropped one directive (%s) to recover",
+                req.scenario_id, dropped,
+            )
+            return plan, f"lp-dropped:{dropped}"
+
+    # More than one directive is jointly responsible. Shed them from the end
+    # until the model becomes feasible, keeping as many as possible.
+    remaining = list(directives)
+    while remaining:
+        remaining.pop()
+        plan = _solve(req, remaining)
+        if plan is not None:
+            logger.warning(
+                "%s infeasible; kept %d of %d directives",
+                req.scenario_id, len(remaining), len(directives),
+            )
+            return plan, f"lp-relaxed:{len(remaining)}of{len(directives)}"
+
+    # No directives at all, so this is pure physics and should always solve.
     plan = _solve(req, [])
     if plan is not None:
+        logger.warning("%s: solved with no directives applied", req.scenario_id)
         return plan, "lp-no-directives"
 
-    from app.planner import build_baseline_plan
+    from app.planner import build_safe_plan
 
-    logger.error("falling back to baseline for %s", req.scenario_id)
-    return build_baseline_plan(req), "baseline"
+    logger.error("%s: LP unusable, using the idle-battery safe plan", req.scenario_id)
+    effective_solar, _, _, _, _ = directive_effects(req.model_dump(), directives)
+    return build_safe_plan(req, effective_solar), "safe-plan"

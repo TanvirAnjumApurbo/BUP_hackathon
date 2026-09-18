@@ -61,6 +61,34 @@ def get(url: str, timeout: float = 20.0):
         return None, {"error": str(exc)}
 
 
+def percentile(sorted_values, pct: float) -> float:
+    if not sorted_values:
+        return 0.0
+    index = max(0, min(len(sorted_values) - 1, int(round(len(sorted_values) * pct / 100.0)) - 1))
+    return sorted_values[index]
+
+
+def latency_band(p95_ms: float):
+    """The rubric's latency scoring bands."""
+    if p95_ms <= 5000:
+        return "3/3", GREEN
+    if p95_ms <= 15000:
+        return "2/3", YELLOW
+    if p95_ms <= 30000:
+        return "1/3", YELLOW
+    return "0/3", RED
+
+
+def hammer(base: str, payload: dict, times: int = 20):
+    """Repeated valid requests must never produce a 5xx."""
+    statuses, latencies = [], []
+    for _ in range(times):
+        status, _, ms = post(f"{base}/optimize-energy", payload)
+        statuses.append(status)
+        latencies.append(ms)
+    return statuses, latencies
+
+
 def norm_adjustment(adj):
     """Compare numbers loosely; wording is never compared."""
     if adj is None:
@@ -125,7 +153,12 @@ def main() -> int:
             hard_fail += 1
             continue
 
-        problems = replay(payload, body)
+        # Replay exactly as the judge does: against organizer ground-truth
+        # directives, not against whatever the response claimed for itself.
+        truth = [d for d in expected["directive_interpretation"] if d["applies"]]
+        problems = replay(payload, body, truth)
+        # Also self-consistency, in case our own interpretation disagrees.
+        problems += [p for p in replay(payload, body) if p not in problems]
         valid = not problems
         if not valid:
             hard_fail += 1
@@ -150,10 +183,41 @@ def main() -> int:
             f"{ms:>9.0f}"
         )
 
-    latencies.sort()
-    p95 = latencies[int(len(latencies) * 0.95) - 1] if latencies else 0.0
     print("-" * len(header))
-    print(f"{DIM}p95 latency {p95:.0f} ms   max {max(latencies, default=0):.0f} ms{RESET}")
+
+    # Two further passes over every case. Run 1 is cold; runs 2 and 3 exercise
+    # the caches, which is what the judge sees when it replays a scenario.
+    run_latencies = [list(latencies)]
+    for run in (2, 3):
+        this_run = []
+        for case in cases:
+            _, _, ms = post(f"{base}/optimize-energy", case["input"])
+            this_run.append(ms)
+        run_latencies.append(this_run)
+        this_run_sorted = sorted(this_run)
+        print(f"{DIM}run {run}: p95 {percentile(this_run_sorted, 95):.0f} ms   "
+              f"median {percentile(this_run_sorted, 50):.0f} ms{RESET}")
+        latencies.extend(this_run)
+
+    cold = sorted(run_latencies[0])
+    warm = sorted(run_latencies[1] + run_latencies[2])
+    combined = sorted(latencies)
+    p95 = percentile(combined, 95)
+
+    print()
+    print(f"{'':<14}{'p95':>10}{'median':>10}{'max':>10}")
+    print(f"{'run 1 (cold)':<14}{percentile(cold, 95):>10.0f}{percentile(cold, 50):>10.0f}{max(cold):>10.0f}")
+    print(f"{'runs 2-3':<14}{percentile(warm, 95):>10.0f}{percentile(warm, 50):>10.0f}{max(warm):>10.0f}")
+    print(f"{'all 30':<14}{p95:>10.0f}{percentile(combined, 50):>10.0f}{max(combined):>10.0f}")
+
+    band, colour = latency_band(p95)
+    print(f"\np95 over 3 runs: {colour}{p95:.0f} ms{RESET} -> latency score {colour}{band}{RESET}"
+          f"   {DIM}(<=5s is 3/3; hard ceiling 30s){RESET}")
+    if max(combined) > 30000:
+        print(f"{RED}A request exceeded the 30s hard ceiling.{RESET}")
+        hard_fail += 1
+    speedup = percentile(cold, 50) / max(percentile(warm, 50), 0.001)
+    print(f"{DIM}cache speedup on repeats: {speedup:.1f}x{RESET}")
 
     if failures:
         print(f"\n{RED}{'=' * 60}\nHARD FAILURES (these must be zero)\n{'=' * 60}{RESET}")
@@ -164,9 +228,23 @@ def main() -> int:
             if len(problems) > 8:
                 print(f"  ... {len(problems) - 8} more")
 
+    # 20 valid requests in a row: zero 5xx is the requirement.
+    print()
+    statuses, hammer_ms = hammer(base, cases[0]["input"], 20)
+    server_errors = [s for s in statuses if s is None or s >= 500]
+    non_200 = [s for s in statuses if s != 200]
+    hammer_sorted = sorted(hammer_ms)
+    ok = not server_errors and not non_200
+    print(f"{(GREEN + 'ok  ' if ok else RED + 'FAIL') + RESET} hammer 20x valid payloads: "
+          f"{len(statuses) - len(non_200)}/20 returned 200, {len(server_errors)} server errors, "
+          f"p95 {percentile(hammer_sorted, 95):.0f} ms")
+    if not ok:
+        hard_fail += 1
+        print(f"      {RED}statuses: {statuses}{RESET}")
+
     print()
     if hard_fail:
-        print(f"{RED}{hard_fail} case(s) returned an invalid plan.{RESET}")
+        print(f"{RED}{hard_fail} failure(s).{RESET}")
         return 1
     print(f"{GREEN}All 10 cases returned a structurally valid plan.{RESET}")
     print(f"{DIM}interp = directive_type + hours + numeric values vs reference. cost = exact optimal.{RESET}")

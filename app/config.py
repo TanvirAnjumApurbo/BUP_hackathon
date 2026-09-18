@@ -97,6 +97,21 @@ def configured_providers() -> List[ProviderConfig]:
     return [catalogue[n] for n in order if n in catalogue and catalogue[n].api_key]
 
 
+def llm_total_budget_seconds() -> float:
+    """Wall-clock ceiling for the whole interpretation phase, across every
+    provider and retry.
+
+    Without this the worst case is providers x attempts x per-call timeout, which
+    with three providers configured would be 60s — double the 30s per-request
+    hard ceiling the judge enforces. The budget leaves ample headroom for the
+    optimizer (about 2 ms) and serialization.
+    """
+    try:
+        return float(_env("LLM_TOTAL_BUDGET_SECONDS", "20"))
+    except ValueError:
+        return 20.0
+
+
 def llm_timeout_seconds() -> float:
     try:
         return float(_env("LLM_TIMEOUT_SECONDS", "8"))

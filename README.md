@@ -212,11 +212,31 @@ limits, battery bounds and rate limits, directive windows, and end-of-day batter
 neutrality. This returns the provably cheapest valid schedule rather than an
 approximation.
 
-**`app/validator.py` is our own independent judge.** Before any response is
-returned it replays the schedule hour by hour against every documented rule —
-energy balance, effective solar, battery transitions and bounds, charge and
-discharge windows, grid caps, end-of-day neutrality, and a recount of all three
-reported totals. The result is reported in the `X-Self-Check` header.
+**`app/validator.py` is our own independent judge.** Before any response leaves
+the process it replays the schedule hour by hour against every documented rule —
+24 unique hours, finite non-negative values, energy balance, effective solar,
+battery transitions, bounds and rate limits, every applied directive, end-of-day
+neutrality, and a recount of all three reported totals, at the published 0.01
+tolerance. The outcome is reported in the `X-Self-Check` header.
+
+Two details make this a genuine replica rather than a formality:
+
+- It validates the **serialized JSON**, not internal Python floats. The numbers
+  under test are the exact ones that go on the wire.
+- A failure **changes the response**. We do not log and ship anyway. The plan is
+  rebuilt with `build_safe_plan` — battery idle all day, solar capped at the
+  effective figure after `solar_reduction` — which satisfies energy balance,
+  battery bounds, rate limits, transitions and end-of-day neutrality by
+  construction. We then re-validate and ship whichever of the two plans has fewer
+  violations, so an unsatisfiable directive never costs us the cheaper schedule
+  for nothing. The reason is logged internally and never appears in the response body.
+
+If the LP itself is infeasible — typically a misparsed directive such as a reserve
+the battery cannot reach — `build_optimal_plan` drops the **single offending
+directive** and re-solves, rather than discarding all of them. Only if several are
+jointly responsible does it shed more, and the route taken is reported in the
+`X-Optimizer` header (`lp`, `lp-dropped:<type>`, `lp-relaxed:NofM`,
+`lp-no-directives`, `safe-plan`).
 
 ---
 
@@ -242,6 +262,8 @@ Two further suites need no network and no LLM quota:
 python scripts/test_optimizer.py    # LP vs the reference optima, plus the rubric's quality_ratio
 python scripts/test_guardrails.py   # repair layer, on clean AND deliberately corrupted model output
 python scripts/test_overlaps.py     # how overlapping directives combine, plus infeasibility fallback
+python scripts/test_selfcheck.py    # judge-replica gate, safe fallback plan, directive dropping
+python scripts/verify_deployment.py <url>   # full check of a LIVE deployment
 python scripts/check_llm.py         # provider reachability, accuracy and latency
 ```
 

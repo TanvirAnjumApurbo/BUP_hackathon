@@ -20,12 +20,18 @@ import asyncio
 import hashlib
 import json
 import logging
+import time
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import httpx
 
-from app.config import ProviderConfig, configured_providers, llm_timeout_seconds
+from app.config import (
+    ProviderConfig,
+    configured_providers,
+    llm_timeout_seconds,
+    llm_total_budget_seconds,
+)
 from app.guardrails import validate_model_output
 from app.models import BatteryInput
 
@@ -296,15 +302,26 @@ async def interpret(
         logger.error("no LLM provider is configured")
         return None, "unconfigured"
 
+    # One wall-clock budget for the entire phase, so adding a third provider can
+    # never push a request past the judge's 30s ceiling.
+    deadline = time.monotonic() + llm_total_budget_seconds()
+
     for cfg in providers:
         caller = _call_openai_compatible if cfg.kind == "openai" else _call_gemini
         correction: Optional[str] = None
 
         for attempt in (1, 2):
+            remaining = deadline - time.monotonic()
+            if remaining < 1.0:
+                logger.warning(
+                    "interpretation budget exhausted before %s attempt %d", cfg.name, attempt
+                )
+                return None, "budget-exhausted"
+
             try:
                 payload = await asyncio.wait_for(
                     caller(cfg, notes, battery, correction),
-                    timeout=llm_timeout_seconds() + 2.0,
+                    timeout=min(llm_timeout_seconds() + 2.0, remaining),
                 )
             except Exception as exc:  # noqa: BLE001 — provider failure must never escape
                 logger.warning(
