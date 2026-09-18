@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.env.*
+.git/
+.cache/
+.llm_cache/
+scripts/
+BUP_CSE_FEST_2026_Participant_Docs/
+*.md

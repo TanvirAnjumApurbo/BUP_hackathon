@@ -1,0 +1,28 @@
+# --- secrets: never commit ---
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+secrets/
+
+# .env.example documents variable NAMES only and MUST be committed
+!.env.example
+
+# --- python ---
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# --- caches ---
+.cache/
+.llm_cache/
+
+# --- editors / os ---
+.DS_Store
+.idea/
+.vscode/
+
+# --- internal strategy doc: this repo becomes public after the deadline ---
+PLAN.md

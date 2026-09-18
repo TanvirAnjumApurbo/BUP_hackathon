@@ -1,0 +1,1 @@
+When I will command you to commit then commit. In commit or as contributor dont add you (Claude). Commit message should be short like human. 
