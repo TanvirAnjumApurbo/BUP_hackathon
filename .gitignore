@@ -27,3 +27,7 @@ venv/
 # --- internal strategy doc: this repo becomes public after the deadline ---
 PLAN.md
 VERIFY.md
+
+# organizer-provided materials and local assistant config — not our work product
+BUP_CSE_FEST_2026_Participant_Docs/*.pdf
+CLAUDE.md
