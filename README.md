@@ -339,6 +339,36 @@ mean quality_ratio                     1.0000
 projected Optimization Quality          10.00 / 10
 ```
 
+### Adversarial paraphrase suite
+
+The ten public cases are not a test set. `tests/paraphrases.json` holds **62
+hand-labelled scenarios across 70 notes**, written specifically to break what the
+public set cannot reach: plural equipment nouns, 24-hour clocks, overnight
+windows, fraction words, percentages of capacity, two windows in one note,
+past-tense outages, and — the hardest group — distractors that *contain* energy
+words while carrying no directive at all ("the solar panel procurement meeting has
+been rescheduled", "the grid operator's annual report was published yesterday").
+
+```
+group                         pass   total
+max_grid_window                  6       6
+minimum_battery_reserve          9       9
+multi                            6       6
+no_charge_window                 7       7
+no_discharge_window              5       5
+no_op                           13      13
+solar_reduction                 16      16
+TOTAL                           62      62   100.0%
+```
+
+`--offline` runs only the deterministic layers, which needs no model quota and
+catches most window regressions instantly.
+
+This suite is what found the three interpretation bugs fixed during development:
+a relevance guard that failed on plural nouns, a deterministic window parser that
+overrode the model on notes containing two ranges, and a past-tense outage being
+promoted into a live directive. All three were invisible to the public cases.
+
 ---
 
 ## 5. Architecture — LLM → guardrails → LP optimizer → replay validator
