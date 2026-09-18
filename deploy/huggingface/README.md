@@ -27,7 +27,7 @@ Set these in **Settings → Variables and secrets** (as *secrets*, not variables
 |---|---|
 | `OPENAI_API_KEY` | your key |
 | `LLM_PROVIDER` | `openai` |
-| `LLM_MODEL` | `gpt-4o-mini` |
+| `LLM_MODEL` | `gpt-5.4-mini` |
 
 Without `OPENAI_API_KEY` the service still answers, but degrades to the keyword
 fallback interpreter — check the `X-Interpreter` response header to confirm which
