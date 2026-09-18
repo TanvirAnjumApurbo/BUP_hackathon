@@ -96,11 +96,40 @@ def _to_24h(hour: Optional[int], meridiem: Optional[str]) -> Optional[int]:
 
 
 def parse_window(text: str) -> Optional[Window]:
-    """Best window found in the note, or None if the text has no range at all."""
-    match = _RANGE.search(text or "")
-    if not match:
-        return None
+    """Window(s) found in the note, or None if the text has no range at all.
 
+    A note can legitimately carry two ranges ("from 10 AM until noon and again
+    from 2 PM until 4 PM"), but a second range can equally belong to something
+    else ("capped from 6 PM to 9 PM following the 2 PM to 4 PM inspection").
+    A regex cannot tell those apart, so when more than one range is present we
+    return the union but mark it low confidence, which hands the decision to the
+    model. It reads context; we only provide the backstop.
+    """
+    matches = list(_RANGE.finditer(text or ""))
+    if not matches:
+        return None
+    if len(matches) > 1:
+        merged: List[int] = []
+        sources = []
+        for match in matches:
+            window = _single_window(match)
+            if window is None:
+                continue
+            merged.extend(window.hours)
+            sources.append(window.source)
+        if not merged:
+            return None
+        return Window(
+            hours=sorted(set(merged)),
+            start=min(merged),
+            end=max(merged) + 1,
+            confidence="low",
+            source=" + ".join(sources),
+        )
+    return _single_window(matches[0])
+
+
+def _single_window(match: "re.Match") -> Optional[Window]:
     left_raw, right_raw = match.group(1), match.group(2)
     left_hour, left_meridiem = _parse_endpoint(left_raw)
     right_hour, right_meridiem = _parse_endpoint(right_raw)

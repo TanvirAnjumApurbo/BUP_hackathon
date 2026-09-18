@@ -327,6 +327,7 @@ python scripts/test_overlaps.py       # how overlapping directives combine; infe
 python scripts/test_selfcheck.py      # replay gate, safe fallback plan, directive dropping
 python scripts/check_llm.py           # provider reachability, extraction accuracy, latency
 python scripts/bench_models.py        # compare candidate models on accuracy and latency
+python scripts/test_paraphrases.py    # 62 adversarial paraphrase scenarios (add --offline to skip the model)
 python scripts/verify_deployment.py <base-url>   # full check of a live deployment
 ```
 

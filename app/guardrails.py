@@ -59,8 +59,10 @@ _FRACTIONS = (
 )
 
 _SOLAR_OFF = re.compile(
-    r"\b(?:offline|off ?line|out of service|no output|zero output|shut down|"
-    r"shutdown|completely down|fully down|disconnected)\b",
+    r"\b(?:offline|off ?line|out of service|no output|zero output|zero|nil|"
+    r"shut down|shutdown|completely down|fully down|disconnected|de-?energised|"
+    r"de-?energized|no generation|not generating|generate nothing|produce nothing|"
+    r"nothing at all|total loss)\b",
     re.I,
 )
 
@@ -80,6 +82,15 @@ _ENERGY_WORDS = re.compile(
 # Solar hardware, used to recognise an outage note that the model mislabelled.
 _SOLAR_EQUIPMENT = re.compile(
     r"\b(solar|pv|photovoltaic\w*|panel\w*|inverter\w*|rooftop|array\w*|module\w*)\b",
+    re.I,
+)
+
+# A note anchored to a different day cannot change today's 24-hour schedule.
+# Only unambiguous markers are listed: "tomorrow" is left out because the
+# horizon is "the next 24 hours" and it could legitimately fall inside it.
+_OTHER_DAY = re.compile(
+    r"\b(yesterday|last night|last week|last month|last quarter|last year|"
+    r"previous(?:ly)?|earlier this week|next week|next month|next quarter|next year)\b",
     re.I,
 )
 
@@ -335,6 +346,16 @@ def reclassify_solar_outage(note: str, directive_type: str) -> str:
     return "solar_reduction"
 
 
+def refers_to_another_day(note: str) -> bool:
+    """A note anchored to a different day cannot change today's 24-hour schedule.
+
+    "Yesterday the inverters were offline from 1 PM until 4 PM" describes a past
+    event, not an instruction — but it carries solar hardware, an outage phrase
+    and a time window, so without this check it would be promoted to a directive.
+    """
+    return bool(_OTHER_DAY.search(note or ""))
+
+
 def _no_op(index: int, explanation: str = NO_OP_EXPLANATION) -> DirectiveInterpretation:
     return DirectiveInterpretation(
         note_index=index,
@@ -370,6 +391,11 @@ def build_interpretations(
 
         if directive_type not in VALID_TYPES:
             directive_type = "no_op"
+
+        if refers_to_another_day(note):
+            logger.info("note %d is anchored to another day — forcing no_op", index)
+            results.append(_no_op(index))
+            continue
 
         # Runs before the no_op short-circuit: an unmistakable solar outage must
         # survive the model having called it no_op.
