@@ -169,7 +169,7 @@ def main() -> int:
         print(f"{RED}{hard_fail} case(s) returned an invalid plan.{RESET}")
         return 1
     print(f"{GREEN}All 10 cases returned a structurally valid plan.{RESET}")
-    print(f"{DIM}interp/cost failures are expected until the LLM and optimizer land.{RESET}")
+    print(f"{DIM}interp = directive_type + hours + numeric values vs reference. cost = exact optimal.{RESET}")
     return 0
 
 

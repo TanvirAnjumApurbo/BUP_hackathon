@@ -1,0 +1,67 @@
+name: build-and-publish-image
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # GHCR rejects uppercase in image names, and the repo name has capitals.
+      - name: Compute lowercase image name
+        run: echo "IMAGE=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - name: Build image
+        run: docker build -t "$IMAGE:ci" .
+
+      # This is the rubric's "clean startup / documented command works" check,
+      # run automatically on every push instead of once by hand at 10pm.
+      - name: Smoke test the image exactly as a judge would
+        run: |
+          docker run -d --name gridwise -p 8000:8000 -e PORT=8000 "$IMAGE:ci"
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
+              echo "ready after ${i}s"; break
+            fi
+            sleep 1
+          done
+          echo "--- GET /health ---"
+          curl -fsS http://localhost:8000/health
+          echo
+          test "$(curl -fsS http://localhost:8000/health)" = '{"status":"ok"}'
+          echo "--- public sample cases ---"
+          python3 scripts/test_samples.py http://localhost:8000
+          docker logs gridwise | tail -20
+          docker rm -f gridwise
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag and push
+        run: |
+          docker tag "$IMAGE:ci" "$IMAGE:latest"
+          docker tag "$IMAGE:ci" "$IMAGE:${GITHUB_SHA::7}"
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:${GITHUB_SHA::7}"
+
+      - name: Report the exact digest to put in the README
+        run: |
+          {
+            echo "### Submit this image reference"
+            echo '```'
+            docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE:latest"
+            echo '```'
+            echo "Remember: make the GHCR package **public** before submitting."
+          } >> "$GITHUB_STEP_SUMMARY"
