@@ -12,6 +12,7 @@ import hashlib
 import json
 import logging
 import time
+import traceback
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -21,7 +22,7 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app import fallback, llm
-from app.config import load_dotenv
+from app.config import configured_providers, load_dotenv
 from app.guardrails import build_interpretations
 from app.models import DirectiveInterpretation, OptimizeRequest, OptimizeResponse
 from app.optimizer import build_optimal_plan
@@ -33,7 +34,79 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("gridwise")
 
+_secrets_cache: Optional[List[str]] = None
+
+
+def _known_secrets() -> List[str]:
+    """Configured credentials, read once. Environment is fixed at process start."""
+    global _secrets_cache
+    if _secrets_cache is None:
+        try:
+            _secrets_cache = [
+                cfg.api_key for cfg in configured_providers() if len(cfg.api_key) >= 8
+            ]
+        except Exception:  # noqa: BLE001 — logging must never fail because of this
+            _secrets_cache = []
+    return _secrets_cache
+
+
+class SecretRedactingFilter(logging.Filter):
+    """Remove every configured credential from every log record in the process.
+
+    Nothing here puts a key into a log message on purpose, and the provider
+    client passes keys in headers precisely so they cannot appear in a URL. This
+    filter is what makes that a property of the process rather than a property of
+    how carefully each call site was written: a third-party library embedding a
+    credential in an error string or a traceback cannot leak it either.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        secrets = _known_secrets()
+        if not secrets:
+            return True
+
+        message = record.getMessage()
+        cleaned = message
+        for secret in secrets:
+            cleaned = cleaned.replace(secret, "***redacted***")
+        if cleaned != message:
+            record.msg, record.args = cleaned, ()
+
+        if record.exc_info:
+            # Pre-rendering exc_text is what the stdlib Formatter reads, so the
+            # traceback is covered too, not just the message line.
+            text = "".join(traceback.format_exception(*record.exc_info))
+            for secret in secrets:
+                text = text.replace(secret, "***redacted***")
+            record.exc_text = text.rstrip()
+        return True
+
+
+def apply_secret_filter() -> None:
+    """Attach the filter to every handler that exists right now.
+
+    Called again at startup because uvicorn installs its own handlers after this
+    module is imported, and a handler added later would otherwise be unfiltered.
+    """
+    names = [""] + [
+        name
+        for name in logging.root.manager.loggerDict
+        if name.split(".")[0] in ("uvicorn", "gridwise", "httpx", "fastapi")
+    ]
+    for name in names:
+        for handler in logging.getLogger(name).handlers:
+            if not any(isinstance(f, SecretRedactingFilter) for f in handler.filters):
+                handler.addFilter(SecretRedactingFilter())
+
+
+apply_secret_filter()
+
 app = FastAPI(title="GridWise", version="1.0.0")
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    apply_secret_filter()
 
 
 @app.on_event("shutdown")
@@ -277,7 +350,7 @@ async def optimize_energy(req: OptimizeRequest, response: Response) -> OptimizeR
     response.headers["X-Latency-Ms"] = f"{elapsed_ms:.1f}"
     response.headers["X-Self-Check"] = "pass" if not problems else "fail"
     logger.info(
-        "%s: %s via %s, plan via %s, %.0f ms, self-check %s",
+        "%s: %d directive(s) via %s, plan via %s, %.0f ms, self-check %s",
         req.scenario_id, len(directives), interpreter, route, elapsed_ms,
         "pass" if not problems else "FAIL",
     )

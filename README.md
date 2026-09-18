@@ -5,8 +5,8 @@
 | | |
 |---|---|
 | **Live endpoint** | `https://buphackathon-production-7134.up.railway.app` |
-| **Docker image** | `ghcr.io/tanviranjumapurbo/bup_hackathon:0466c8f` |
-| **Image digest** | `sha256:711dbc4b689dc0a02bb2e1c20a7c6479b4c00f5e94ed885d9f044879869bf2ea` |
+| **Docker image** | `ghcr.io/tanviranjumapurbo/bup_hackathon:latest` |
+| **Image tag** | `latest` is rebuilt and smoke-tested by CI on every commit to `main` |
 | **Model / provider** | OpenAI `gpt-5.4-mini` (Chat Completions, strict `json_schema`, `temperature=0`) |
 | **Runtime** | Python 3.11, FastAPI + uvicorn, SciPy HiGHS |
 
@@ -475,14 +475,14 @@ ten public cases, and pushed by GitHub Actions on every commit to `main`
 (`.github/workflows/docker.yml`). The package is public, so no login is required.
 
 ```bash
-docker pull ghcr.io/tanviranjumapurbo/bup_hackathon:0466c8f
+docker pull ghcr.io/tanviranjumapurbo/bup_hackathon:latest
 
 docker run --rm -p 8000:8000 \
   -e PORT=8000 \
   -e LLM_PROVIDER=openai \
   -e LLM_MODEL=gpt-5.4-mini \
   -e OPENAI_API_KEY="<your key>" \
-  ghcr.io/tanviranjumapurbo/bup_hackathon:0466c8f
+  ghcr.io/tanviranjumapurbo/bup_hackathon:latest
 ```
 
 ```bash
@@ -490,10 +490,11 @@ curl http://localhost:8000/health
 # {"status":"ok"}
 ```
 
-Pin by digest instead of tag if preferred:
+Every push to `main` also publishes a short-SHA tag, so any single commit can be
+pinned exactly:
 
 ```
-ghcr.io/tanviranjumapurbo/bup_hackathon@sha256:711dbc4b689dc0a02bb2e1c20a7c6479b4c00f5e94ed885d9f044879869bf2ea
+ghcr.io/tanviranjumapurbo/bup_hackathon:<7-char-commit-sha>
 ```
 
 The container binds `0.0.0.0`, honours `$PORT` (so the same image runs on any host), exposes
@@ -516,7 +517,7 @@ credentials of any kind** — every key is supplied at run time.
 | [httpx](https://www.python-httpx.org/) | Async HTTP client for the model provider |
 | [OpenAI API](https://platform.openai.com/) | `gpt-5.4-mini`, operator-note interpretation |
 
-Exact pins are in `requirements.txt`. Verified on Python 3.11 (container) and 3.12 (development)
+Version ranges are in `requirements.txt`. Verified on Python 3.11 (container) and 3.12 (development)
 with FastAPI 0.141, pydantic 2.13, SciPy 1.13, NumPy 1.26, httpx 0.28.
 
 The problem statement, participant guide and public sample cases are provided by the BUP CSE

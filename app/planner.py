@@ -1,10 +1,9 @@
-"""Schedule construction.
+"""Schedule construction and totals.
 
-STAGE 1 (now): a trivially valid baseline — battery idle all day, use whatever
-solar the demand can absorb, buy the rest from the grid. It is not cheap, but it
-satisfies every GridWise energy rule, which is what earns points first.
-
-STAGE 2 (next): `build_optimal_plan` replaces the baseline with the LP.
+The normal schedule comes from `app.optimizer.build_optimal_plan`. What lives
+here is the conservative alternative it falls back to — battery idle all day,
+solar used up to demand, grid covering the rest — plus the recount of the three
+reported totals from the rows that are actually emitted.
 """
 
 from typing import Dict, List, Optional, Tuple
@@ -18,34 +17,6 @@ ROUND_DP = 6
 
 def r(x: float) -> float:
     return round(float(x), ROUND_DP)
-
-
-def build_baseline_plan(req: OptimizeRequest) -> List[HourPlan]:
-    """Battery idle every hour. Solar used up to demand. Grid covers the rest.
-
-    Valid by construction: energy balance holds, the battery never moves so its
-    bounds and rate limits cannot be broken, and end-of-day energy equals the
-    initial energy.
-    """
-    by_hour: Dict[int, HourInput] = req.hours_by_hour()
-    resting_energy = r(req.battery.initial_energy_kwh)
-
-    rows: List[HourPlan] = []
-    for h in range(24):
-        hr = by_hour[h]
-        solar_used = r(min(hr.solar_kwh, hr.demand_kwh))
-        grid = r(max(0.0, hr.demand_kwh - solar_used))
-        rows.append(
-            HourPlan(
-                hour=h,
-                grid_kwh=grid,
-                solar_used_kwh=solar_used,
-                battery_action="idle",
-                battery_kwh=0.0,
-                battery_energy_after_kwh=resting_energy,
-            )
-        )
-    return rows
 
 
 def build_safe_plan(

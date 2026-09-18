@@ -174,8 +174,14 @@ async def aclose() -> None:
     _client = None
 
 
+# No real operator note approaches this. It exists so that an absurd payload
+# cannot inflate one prompt without bound; every deterministic layer
+# downstream still reads the complete note text.
+MAX_NOTE_CHARS = 4000
+
+
 def build_user_prompt(notes: Sequence[str], battery: BatteryInput) -> str:
-    listed = "\n".join(f"[{i}] {note.strip()}" for i, note in enumerate(notes))
+    listed = "\n".join(f"[{i}] {note.strip()[:MAX_NOTE_CHARS]}" for i, note in enumerate(notes))
     return (
         "Battery context for this scenario:\n"
         f"  capacity_kwh        = {battery.capacity_kwh}\n"
@@ -293,14 +299,32 @@ async def _call_gemini(cfg: ProviderConfig, notes, battery, correction: Optional
         },
     }
     client = await get_client()
+    # The key goes in a header, never in the query string. httpx puts the request
+    # URL into its exception messages, so a key in the URL would be printed
+    # verbatim into the logs the first time a Gemini call failed.
     response = await client.post(
         f"{cfg.base_url}/models/{cfg.model}:generateContent",
-        params={"key": cfg.api_key},
+        headers={"x-goog-api-key": cfg.api_key},
         json=body,
     )
     response.raise_for_status()
     text = response.json()["candidates"][0]["content"]["parts"][0]["text"]
     return json.loads(text)
+
+
+def _redacted(exc: Exception) -> str:
+    """Exception text with every configured credential removed.
+
+    Client libraries put request URLs — and occasionally headers — into their
+    error messages. Keys are sent in headers here precisely so they cannot end up
+    in one, but this is the backstop that keeps "no secret ever reaches a log"
+    true regardless of what any provider or library does next.
+    """
+    text = f"{type(exc).__name__}: {exc}"
+    for cfg in configured_providers():
+        if len(cfg.api_key) >= 8:
+            text = text.replace(cfg.api_key, "***redacted***")
+    return text
 
 
 def _extract(payload: Any) -> Any:
@@ -350,7 +374,7 @@ async def interpret(
                 )
             except Exception as exc:  # noqa: BLE001 — provider failure must never escape
                 logger.warning(
-                    "%s attempt %d failed: %s: %s", cfg.name, attempt, type(exc).__name__, exc
+                    "%s attempt %d failed: %s", cfg.name, attempt, _redacted(exc)
                 )
                 break  # a transport/HTTP failure will not be fixed by a reworded retry
 

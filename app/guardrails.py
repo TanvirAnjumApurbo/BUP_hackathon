@@ -35,11 +35,21 @@ VALID_TYPES = {
 NO_OP_EXPLANATION = "This note does not affect today's 24-hour energy schedule."
 
 # Words that mean the stated share is what is LOST, so the usable fraction is 1 - p.
+# "by" is optional on purpose: "down 80%" and "down by 80%" mean the same thing.
+# "drop TO 20%" is safe from these patterns because "to" is neither "by" nor an
+# approximator, so the number cannot be reached — that wording falls through to
+# _PERCENT, where 20% correctly means the fraction that remains.
 _REDUCTION_PATTERNS = (
-    re.compile(r"(\d+(?:\.\d+)?)\s*%\s*(?:reduction|cut|decrease|drop|loss|less|lower)", re.I),
     re.compile(
-        r"(?:reduc\w*|cut|decreas\w*|drop\w*|fall\w*|declin\w*|lower\w*|down)\s+by\s+"
-        r"(?:about\s+|roughly\s+|around\s+|approximately\s+)?(\d+(?:\.\d+)?)\s*%",
+        r"(\d+(?:\.\d+)?)\s*%\s*"
+        r"(?:reduction|cut|decrease|drop|loss|less|lower|down|off|shortfall|deficit)",
+        re.I,
+    ),
+    re.compile(
+        r"(?:reduc\w*|cut|decreas\w*|drop\w*|fall\w*|declin\w*|lower\w*|down|off|"
+        r"los(?:e|es|ing|t)|loss of|short)\s+(?:by\s+)?"
+        r"(?:about\s+|roughly\s+|around\s+|approximately\s+|nearly\s+|some\s+)?"
+        r"(\d+(?:\.\d+)?)\s*%",
         re.I,
     ),
 )
@@ -90,7 +100,25 @@ _SOLAR_EQUIPMENT = re.compile(
 # horizon is "the next 24 hours" and it could legitimately fall inside it.
 _OTHER_DAY = re.compile(
     r"\b(yesterday|last night|last week|last month|last quarter|last year|"
-    r"previous(?:ly)?|earlier this week|next week|next month|next quarter|next year)\b",
+    r"earlier this week|the other day|next week|next month|next quarter|next year)\b",
+    re.I,
+)
+
+# Even an unambiguous marker only silences a note that is not also instructing us
+# about today. "Following last week's inspection, do not charge from 2 to 4 PM"
+# is an order for today that merely mentions another day.
+_TODAY_INSTRUCTION = re.compile(
+    r"\b(today|tonight|this (?:morning|afternoon|evening|hour)|right now|"
+    r"do not|don't|must not|may not|cannot|avoid|keep|hold|maintain|ensure|"
+    r"cap|limit|restrict|reserve)\b",
+    re.I,
+)
+
+# A directive can cover the whole horizon instead of naming a window.
+_ALL_DAY = re.compile(
+    r"\b(all day|all-day|throughout the day|through the day|whole day|entire day|"
+    r"full day|at all times|at any time|at no point|at any point|around the clock|"
+    r"day and night|24 ?hours|24-hour|rest of the day|remainder of the day)\b",
     re.I,
 )
 
@@ -248,6 +276,13 @@ def resolve_hours(note: str, model_hours: Any) -> tuple[List[int], str]:
         return cleaned, "model"
     if window:
         return window.hours, "parser-low-confidence"
+
+    # "keep 120 kWh in reserve at all times today" states no window because it
+    # covers every hour. Without this the directive would be dropped as
+    # unparseable and the case lost. Deliberately last: an explicit range in the
+    # text, or hours from the model, always wins over it.
+    if _ALL_DAY.search(note or ""):
+        return list(range(24)), "all-day"
     return [], "none"
 
 
@@ -275,11 +310,70 @@ def resolve_solar_factor(note: str, model_factor: Any) -> float:
     return max(0.0, min(1.0, factor))
 
 
+# The phrases that introduce the number a directive is actually about. Used only
+# to disambiguate a note that states more than one kWh figure.
+_CAP_ANCHOR = re.compile(
+    r"\b(cap(?:ped)?|limit\w*|exceed|more than|maximum|max|up to|ceiling|"
+    r"below|under|no higher than|no greater than)\b",
+    re.I,
+)
+_RESERVE_ANCHOR = re.compile(
+    r"\b(at least|no less than|not fall below|not drop below|above|minimum|"
+    r"reserve\w*|hold|keep|retain|remain\w*|stay\w*)\b",
+    re.I,
+)
+_ANCHOR_REACH = 40
+
+
+def _kwh_matches(note: str) -> List[tuple]:
+    return [(m.start(), float(m.group(1))) for m in _KWH.finditer(note or "")]
+
+
+def _pick_kwh(
+    note: str,
+    model_value: Any,
+    anchors: "re.Pattern",
+    exclude: Optional[float] = None,
+) -> Optional[float]:
+    """Which kWh figure in the note the directive is actually about.
+
+    A single figure is unambiguous and is used as-is. When a note states several
+    — "the 200 kWh bank must not fall below 120 kWh" — taking the first one
+    blindly is wrong, so: a figure that merely restates a known battery parameter
+    is dropped; then the figure introduced by the phrase that names the limit
+    wins; then the model's own reading breaks the tie if its answer is one of the
+    numbers actually written in the note.
+    """
+    matches = _kwh_matches(note)
+    if not matches:
+        return None
+
+    candidates = [
+        (pos, value)
+        for pos, value in matches
+        if exclude is None or abs(value - exclude) > 1e-6
+    ] or matches
+    if len(candidates) == 1:
+        return candidates[0][1]
+
+    for anchor in anchors.finditer(note or ""):
+        for pos, value in candidates:
+            if anchor.end() <= pos <= anchor.end() + _ANCHOR_REACH:
+                return value
+
+    stated = _number(model_value)
+    if stated is not None:
+        for _, value in candidates:
+            if abs(stated - value) <= 1e-6:
+                return value
+    return candidates[0][1]
+
+
 def resolve_reserve(note: str, model_value: Any, capacity_kwh: float) -> Optional[float]:
     """Reserve in kWh. A percentage in the text is resolved against capacity."""
-    match = _KWH.search(note)
-    if match:
-        return max(0.0, min(capacity_kwh, float(match.group(1))))
+    chosen = _pick_kwh(note, model_value, _RESERVE_ANCHOR, exclude=capacity_kwh)
+    if chosen is not None:
+        return max(0.0, min(capacity_kwh, chosen))
 
     match = _PERCENT.search(note)
     if match:
@@ -299,9 +393,9 @@ def resolve_reserve(note: str, model_value: Any, capacity_kwh: float) -> Optiona
 
 
 def resolve_grid_cap(note: str, model_value: Any) -> Optional[float]:
-    match = _KWH.search(note)
-    if match:
-        return float(match.group(1))
+    chosen = _pick_kwh(note, model_value, _CAP_ANCHOR)
+    if chosen is not None:
+        return chosen
     value = _number(model_value)
     return value if value is not None and value >= 0 else None
 
@@ -352,8 +446,16 @@ def refers_to_another_day(note: str) -> bool:
     "Yesterday the inverters were offline from 1 PM until 4 PM" describes a past
     event, not an instruction — but it carries solar hardware, an outage phrase
     and a time window, so without this check it would be promoted to a directive.
+
+    A note that mentions another day while still giving an order for today —
+    "following last week's inspection, do not charge between 2 and 4 PM" — is an
+    instruction, and silencing it would lose the interpretation, the directive
+    application and the optimization credit for that case all at once.
     """
-    return bool(_OTHER_DAY.search(note or ""))
+    note = note or ""
+    if not _OTHER_DAY.search(note):
+        return False
+    return not _TODAY_INSTRUCTION.search(note)
 
 
 def _no_op(index: int, explanation: str = NO_OP_EXPLANATION) -> DirectiveInterpretation:

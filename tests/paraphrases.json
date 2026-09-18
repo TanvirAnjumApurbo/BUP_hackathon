@@ -1118,6 +1118,208 @@
           "factor": 0.2
         }
       ]
+    },
+    {
+      "id": "HARD-09",
+      "group": "no_charge_window",
+      "trap": "mentions another day but instructs today",
+      "notes": [
+        "Following last week's inspection, do not charge the battery between 2 PM and 4 PM."
+      ],
+      "expect": [
+        {
+          "type": "no_charge_window",
+          "hours": [
+            14,
+            15
+          ]
+        }
+      ]
+    },
+    {
+      "id": "HARD-10",
+      "group": "minimum_battery_reserve",
+      "trap": "past-day reference in front of a live instruction",
+      "notes": [
+        "Unlike last week, keep at least 90 kWh in the battery from 6 PM until 9 PM."
+      ],
+      "expect": [
+        {
+          "type": "minimum_battery_reserve",
+          "hours": [
+            18,
+            19,
+            20
+          ],
+          "reserve": 90
+        }
+      ]
+    },
+    {
+      "id": "HARD-11",
+      "group": "minimum_battery_reserve",
+      "trap": "whole horizon, no window stated",
+      "notes": [
+        "Keep the battery at or above 80 kWh at all times today."
+      ],
+      "expect": [
+        {
+          "type": "minimum_battery_reserve",
+          "hours": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "reserve": 80
+        }
+      ]
+    },
+    {
+      "id": "HARD-12",
+      "group": "no_charge_window",
+      "trap": "whole horizon, no window stated",
+      "notes": [
+        "Do not charge the battery at any point today."
+      ],
+      "expect": [
+        {
+          "type": "no_charge_window",
+          "hours": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ]
+        }
+      ]
+    },
+    {
+      "id": "HARD-13",
+      "group": "solar_reduction",
+      "trap": "loss stated without the word 'by'",
+      "notes": [
+        "Rooftop solar will be down 80% from 1 PM to 3 PM."
+      ],
+      "expect": [
+        {
+          "type": "solar_reduction",
+          "hours": [
+            13,
+            14
+          ],
+          "factor": 0.2
+        }
+      ]
+    },
+    {
+      "id": "HARD-14",
+      "group": "solar_reduction",
+      "trap": "loss stated as a verb",
+      "notes": [
+        "Expect to lose 60% of solar output between 10 AM and noon."
+      ],
+      "expect": [
+        {
+          "type": "solar_reduction",
+          "hours": [
+            10,
+            11
+          ],
+          "factor": 0.4
+        }
+      ]
+    },
+    {
+      "id": "HARD-15",
+      "group": "minimum_battery_reserve",
+      "trap": "two kWh figures in one note",
+      "notes": [
+        "The 200 kWh bank must not fall below 120 kWh from 6 PM until 9 PM."
+      ],
+      "expect": [
+        {
+          "type": "minimum_battery_reserve",
+          "hours": [
+            18,
+            19,
+            20
+          ],
+          "reserve": 120
+        }
+      ]
+    },
+    {
+      "id": "HARD-16",
+      "group": "max_grid_window",
+      "trap": "battery capacity quoted before the actual cap",
+      "notes": [
+        "With the 200 kWh battery in service, cap grid import at 150 kWh between 6 PM and 9 PM."
+      ],
+      "expect": [
+        {
+          "type": "max_grid_window",
+          "hours": [
+            18,
+            19,
+            20
+          ],
+          "cap": 150
+        }
+      ]
+    },
+    {
+      "id": "HARD-17",
+      "group": "no_op",
+      "trap": "energy words, a kWh figure and another day, but no instruction",
+      "notes": [
+        "The procurement team will order a second 200 kWh battery next month."
+      ],
+      "expect": [
+        {
+          "type": "no_op"
+        }
+      ]
     }
   ]
 }

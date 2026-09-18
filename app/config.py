@@ -1,8 +1,8 @@
 """Environment-driven configuration.
 
 Every credential arrives as an environment variable. `.env` is a local developer
-convenience only and is gitignored; on Koyeb the platform supplies the variables
-directly and no `.env` file exists in the image.
+convenience only and is gitignored; on a deployment host the platform supplies
+the variables directly and no `.env` file exists in the image.
 """
 
 import os

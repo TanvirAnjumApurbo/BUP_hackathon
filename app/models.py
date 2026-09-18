@@ -47,9 +47,17 @@ class BatteryInput(BaseModel):
 
     @model_validator(mode="after")
     def _coherent(self) -> "BatteryInput":
-        if self.minimum_energy_kwh > self.capacity_kwh:
+        # Compared at the judge's own 0.01 tolerance (Problem Statement 11.5) so
+        # that a figure which is equal within tolerance can never turn a valid
+        # scenario into a 400.
+        tol = 0.01
+        if self.minimum_energy_kwh > self.capacity_kwh + tol:
             raise ValueError("minimum_energy_kwh must not exceed capacity_kwh")
-        if not (self.minimum_energy_kwh <= self.initial_energy_kwh <= self.capacity_kwh):
+        if not (
+            self.minimum_energy_kwh - tol
+            <= self.initial_energy_kwh
+            <= self.capacity_kwh + tol
+        ):
             raise ValueError(
                 "initial_energy_kwh must be between minimum_energy_kwh and capacity_kwh"
             )
